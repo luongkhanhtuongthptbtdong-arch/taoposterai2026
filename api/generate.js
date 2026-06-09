@@ -9,32 +9,33 @@ export default async function handler(req, res) {
     const { messages } = req.body;
     const userMsg = messages[0].content;
 
-    const PROMPT = `Bạn là chuyên gia giải toán Việt Nam. Hãy đọc đề bài và trả về JSON (KHÔNG markdown, KHÔNG backtick), đúng format sau:
-{"tieu_de":"TOÁN 12 – CÂU X","de_bai":"nội dung đề bài...","cac_buoc":[{"so":1,"ten":"Tên bước","noi_dung":"giải thích...","cong_thuc":"công thức dùng Unicode: π ² ³ √ × ÷ ≈ ⇔"}],"dap_an":"kết quả","don_vi":"đơn vị nếu có"}
-Quy tắc: giải đúng đủ bước, cong_thuc để chuỗi rỗng nếu không cần, dap_an chỉ là con số/kết quả cuối.`;
+    const PROMPT = `Bạn là chuyên gia giải toán Việt Nam. Trả về JSON (KHÔNG markdown, KHÔNG backtick):
+{"tieu_de":"TOÁN 12 – CÂU X","de_bai":"...","cac_buoc":[{"so":1,"ten":"...","noi_dung":"...","cong_thuc":"..."}],"dap_an":"...","don_vi":"..."}`;
 
-    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+    let text = typeof userMsg === 'string' ? userMsg : 
+      userMsg.filter(i => i.type === 'text').map(i => i.text).join(' ');
 
-    let textContent = PROMPT + '\n\n';
-    let imageBase64 = null;
-    let imageType = null;
-
-    if (typeof userMsg === 'string') {
-      textContent += 'Đề bài: ' + userMsg;
-    } else {
-      for (const item of userMsg) {
-        if (item.type === 'text') {
-          textContent += item.text || 'Hãy đọc và giải đề bài trong ảnh.';
-        } else if (item.type === 'image') {
-          imageBase64 = item.source.data;
-          imageType = item.source.media_type;
-        }
+    const cfRes = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/meta/llama-3.1-8b-instruct`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: PROMPT },
+            { role: 'user', content: text || 'Giải bài toán này' }
+          ]
+        })
       }
-    }
+    );
 
-    let requestBody;
-    let model;
-
-    if (imageBase64) {
-      // Dùng model
+    const data = await cfRes.json();
+    const result = data.result?.response || '';
+    res.status(200).json({ content: [{ type: 'text', text: result }] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
