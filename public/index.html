@@ -16,7 +16,7 @@ body { min-height:100vh; background:#050f05; font-family:'Segoe UI',Arial,sans-s
 #upload-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
 #upload-zone .uz-icon { font-size:28px; margin-bottom:6px; }
 #upload-zone .uz-text { color:#aaffaa; font-size:13px; }
-#upload-zone .uz-sub  { color:#668866; font-size:11px; margin-top:3px; }
+#upload-zone .uz-sub { color:#668866; font-size:11px; margin-top:3px; }
 #preview-area { display:none; margin-bottom:12px; position:relative; }
 #preview-area img { max-width:100%; max-height:220px; border-radius:8px; border:1px solid rgba(255,215,0,.3); display:block; margin:0 auto; }
 #preview-area .preview-label { font-size:11px; color:#ffd700; text-align:center; margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
@@ -86,6 +86,10 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ⚠️ Thay key này bằng Gemini API key của bạn
+const GEMINI_KEY = 'AQ.Ab8RN6IRK28NLgwWNR3914l5ZVAH_fW7J52A53pwyAnuLIxu-w';
+
 const COLORS=[
   {bg:'#0d2b0d',border:'rgba(255,215,0,.3)',accent:'#ffd700'},
   {bg:'#0a1e2e',border:'rgba(0,212,255,.3)',accent:'#00d4ff'},
@@ -93,16 +97,17 @@ const COLORS=[
   {bg:'#2e1a0a',border:'rgba(251,146,60,.3)',accent:'#fb923c'},
   {bg:'#0a2e1a',border:'rgba(52,211,153,.3)',accent:'#34d399'},
 ];
-const SYSTEM=`Bạn là chuyên gia giải toán Việt Nam.
-Trả về JSON (KHÔNG markdown, KHÔNG backtick), đúng format:
-{"tieu_de":"TOÁN 12 – CÂU X PHẦN Y","de_bai":"...","cac_buoc":[{"so":1,"ten":"Tên bước","noi_dung":"...","cong_thuc":"Dùng Unicode: π ² ³ √ × ÷ ≈ ⇔"}],"dap_an":"1617","don_vi":"nghìn đồng"}
-Quy tắc: giải đúng, đủ bước; cong_thuc để "" nếu không cần; dap_an chỉ là kết quả cuối.`;
+
+const PROMPT=`Bạn là chuyên gia giải toán Việt Nam. Hãy đọc đề bài và trả về JSON (KHÔNG markdown, KHÔNG backtick), đúng format sau:
+{"tieu_de":"TOÁN 12 – CÂU X","de_bai":"nội dung đề bài...","cac_buoc":[{"so":1,"ten":"Tên bước","noi_dung":"giải thích...","cong_thuc":"công thức dùng Unicode: π ² ³ √ × ÷ ≈ ⇔"}],"dap_an":"kết quả","don_vi":"đơn vị nếu có"}
+Quy tắc: giải đúng đủ bước, cong_thuc để chuỗi rỗng nếu không cần, dap_an chỉ là con số/kết quả cuối.`;
+
 let currentFileData=null;
 
 function handleDrop(e){e.preventDefault();document.getElementById('upload-zone').classList.remove('drag-over');const f=e.dataTransfer.files[0];if(f)handleFile(f);}
 function handleFile(file){
   if(!file)return;
-  const isPDF=file.type==='application/pdf', isImg=file.type.startsWith('image/');
+  const isPDF=file.type==='application/pdf',isImg=file.type.startsWith('image/');
   if(!isPDF&&!isImg){document.getElementById('error-msg').textContent='❌ Chỉ hỗ trợ ảnh hoặc PDF.';return;}
   const reader=new FileReader();
   reader.onload=async(ev)=>{
@@ -122,7 +127,7 @@ async function showPDFPreview(dataUrl){
     await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
     document.getElementById('preview-img').src=c.toDataURL();
     document.getElementById('preview-area').style.display='block';
-  }catch(e){document.getElementById('preview-area').style.display='block';}
+  }catch(e){}
 }
 function clearFile(){currentFileData=null;document.getElementById('preview-area').style.display='none';document.getElementById('preview-img').src='';document.getElementById('upload-zone').querySelector('input').value='';}
 
@@ -132,25 +137,27 @@ async function generate(){
   const btn=document.getElementById('btn-generate');
   document.getElementById('error-msg').textContent='';
   btn.disabled=true;btn.innerHTML='<span class="spinner"></span>Đang tạo poster...';
+
   try{
-    let userContent;
-    if(currentFileData){
-      userContent=[
-        {type:currentFileData.type==='pdf'?'document':'image',source:{type:'base64',media_type:currentFileData.mediaType,data:currentFileData.base64}},
-        {type:'text',text:textInput||'Đọc đề bài trong file này và giải chi tiết.'}
-      ];
-    }else{userContent=textInput;}
-    const res=await fetch('/api/generate',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:SYSTEM,messages:[{role:'user',content:userContent}]})
-    });
+    let parts=[{text: PROMPT + '\n\n' + (textInput||'Hãy đọc và giải đề bài trong ảnh.')}];
+    if(currentFileData&&currentFileData.type==='image'){
+      parts.push({inline_data:{mime_type:currentFileData.mediaType,data:currentFileData.base64}});
+    }
+
+    const res=await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({contents:[{parts}],generationConfig:{temperature:0.2,maxOutputTokens:2048}})}
+    );
     const data=await res.json();
-    const text=(data.content||[]).map(i=>i.text||'').join('');
+    const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    if(!text)throw new Error('Không có phản hồi');
     const d=JSON.parse(text.replace(/```json|```/g,'').trim());
     renderPoster(d);
     document.getElementById('btn-export').style.display='block';
-  }catch(e){document.getElementById('error-msg').textContent='❌ Không tạo được poster. Kiểm tra lại hoặc thử lại.';}
-  finally{btn.disabled=false;btn.innerHTML='✨ TẠO POSTER';}
+  }catch(e){
+    document.getElementById('error-msg').textContent='❌ Không tạo được poster. Kiểm tra lại hoặc thử lại.';
+  }finally{btn.disabled=false;btn.innerHTML='✨ TẠO POSTER';}
 }
 
 function renderPoster(d){
@@ -170,7 +177,7 @@ async function exportImg(){
   try{
     const canvas=await html2canvas(document.getElementById('poster'),{scale:2,backgroundColor:'#050f05',useCORS:true,logging:false});
     const link=document.createElement('a');link.download='poster-giai-toan.png';link.href=canvas.toDataURL('image/png');link.click();
-  }catch(e){alert('Không xuất được ảnh. Hãy screenshot thủ công.');}
+  }catch(e){alert('Không xuất được ảnh.');}
   finally{btn.disabled=false;btn.textContent='📥 Tải ảnh PNG';}
 }
 document.getElementById('de-bai').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter')generate();});
