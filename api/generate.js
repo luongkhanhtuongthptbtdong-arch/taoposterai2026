@@ -13,37 +13,28 @@ export default async function handler(req, res) {
 {"tieu_de":"TOÁN 12 – CÂU X","de_bai":"nội dung đề bài...","cac_buoc":[{"so":1,"ten":"Tên bước","noi_dung":"giải thích...","cong_thuc":"công thức dùng Unicode: π ² ³ √ × ÷ ≈ ⇔"}],"dap_an":"kết quả","don_vi":"đơn vị nếu có"}
 Quy tắc: giải đúng đủ bước, cong_thuc để chuỗi rỗng nếu không cần, dap_an chỉ là con số/kết quả cuối.`;
 
-    let parts = [];
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+
+    let textContent = PROMPT + '\n\n';
+    let imageBase64 = null;
+    let imageType = null;
+
     if (typeof userMsg === 'string') {
-      parts = [{ text: PROMPT + '\n\nĐề bài: ' + userMsg }];
+      textContent += 'Đề bài: ' + userMsg;
     } else {
-      parts = [{ text: PROMPT + '\n\n' }];
       for (const item of userMsg) {
         if (item.type === 'text') {
-          parts.push({ text: item.text || 'Hãy đọc và giải đề bài trong ảnh.' });
+          textContent += item.text || 'Hãy đọc và giải đề bài trong ảnh.';
         } else if (item.type === 'image') {
-          parts.push({ inlineData: { mimeType: item.source.media_type, data: item.source.data } });
+          imageBase64 = item.source.data;
+          imageType = item.source.media_type;
         }
       }
     }
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
-        })
-      }
-    );
+    let requestBody;
+    let model;
 
-    const data = await geminiRes.json();
-    console.log('GEMINI FULL:', JSON.stringify(data));
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    res.status(200).json({ content: [{ type: 'text', text }], debug: data });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-}
+    if (imageBase64) {
+      // Dùng model
